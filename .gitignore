@@ -38,3 +38,5 @@ backend/app/data/
 .DS_Store
 Thumbs.db
 *.tsbuildinfo
+
+render-bin/
