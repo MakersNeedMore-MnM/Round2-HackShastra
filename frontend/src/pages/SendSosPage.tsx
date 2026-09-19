@@ -1,52 +1,104 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  AlertOctagon, 
-  Database, 
-  Send, 
-  MapPin, 
-  Users, 
-  Activity, 
+  AlertTriangle, 
   CheckCircle2, 
-  AlertCircle, 
-  Radio, 
-  Clock,
-  Layers,
-  ArrowRight,
-  Share2
+  MapPin, 
+  Flame, 
+  Droplets, 
+  HeartPulse, 
+  AlertOctagon, 
+  Car, 
+  HelpCircle,
+  ChevronRight,
+  RefreshCw
 } from 'lucide-react';
-import type { EmergencyMessage, EmergencyType, PriorityLevel } from '../types/message';
+import type { EmergencyMessage, EmergencyType } from '../types/message';
 import { 
   saveMessage, 
   getOutboxMessages, 
   getOrCreateNodeId 
 } from '../storage/db';
-import { NetworkStatus } from '../components/NetworkStatus';
 import { BroadcastTransport } from '../transport/BroadcastTransport';
 
+type QuickType = 'FIRE' | 'FLOOD' | 'MEDICAL' | 'TRAPPED' | 'ACCIDENT' | 'OTHER';
+
+const QUICK_TYPES: { id: QuickType; label: string; icon: React.ReactNode; schemaType: EmergencyType }[] = [
+  { id: 'MEDICAL', label: 'MEDICAL', icon: <HeartPulse size={16} />, schemaType: 'MEDICAL' },
+  { id: 'TRAPPED', label: 'TRAPPED', icon: <AlertOctagon size={16} />, schemaType: 'RESCUE' },
+  { id: 'FLOOD', label: 'FLOOD', icon: <Droplets size={16} />, schemaType: 'HAZARD' },
+  { id: 'FIRE', label: 'FIRE', icon: <Flame size={16} />, schemaType: 'HAZARD' },
+  { id: 'ACCIDENT', label: 'ACCIDENT', icon: <Car size={16} />, schemaType: 'RESCUE' },
+  { id: 'OTHER', label: 'OTHER', icon: <HelpCircle size={16} />, schemaType: 'OTHER' },
+];
+
 export const SendSosPage: React.FC = () => {
-  // Offline simulation toggle
-  const [simulatedOffline, setSimulatedOffline] = useState<boolean>(true);
-  
-  // Form fields
-  const [location, setLocation] = useState<string>('Bridge Zone');
-  const [report, setReport] = useState<string>('3 people trapped near the bridge. One child injured. Water level rising fast.');
-  const [peopleAffected, setPeopleAffected] = useState<number>(3);
-  const [injuryPresent, setInjuryPresent] = useState<boolean>(true);
-  const [emergencyType, setEmergencyType] = useState<EmergencyType>('RESCUE');
-
-  // Queue state
-  const [queuedMessages, setQueuedMessages] = useState<EmergencyMessage[]>([]);
   const [nodeId, setNodeId] = useState<string>('');
-  const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-  const [submitting, setSubmitting] = useState<boolean>(false);
   const [transport, setTransport] = useState<BroadcastTransport | null>(null);
-  const [broadcastingId, setBroadcastingId] = useState<string | null>(null);
+  
+  // Geolocation state
+  const [locationAvailable, setLocationAvailable] = useState<boolean>(false);
+  const [coordsLocation, setCoordsLocation] = useState<string>('LOCATION UNAVAILABLE');
+  const [locationDetecting, setLocationDetecting] = useState<boolean>(true);
 
-  // Initialize node ID & load existing outbox from IndexedDB
+  // SOS state
+  const [activeSos, setActiveSos] = useState<EmergencyMessage | null>(null);
+  const [recentSosList, setRecentSosList] = useState<EmergencyMessage[]>([]);
+  const [sending, setSending] = useState<boolean>(false);
+  const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
+
+  // Optional details fields
+  const [selectedQuickType, setSelectedQuickType] = useState<QuickType>('OTHER');
+  const [optionalMessage, setOptionalMessage] = useState<string>('');
+  const [peopleCount, setPeopleCount] = useState<number>(1);
+  const [detailsSaved, setDetailsSaved] = useState<boolean>(false);
+
+  // 1. Refresh recent messages sent on this device
+  const refreshOutbox = useCallback(async () => {
+    try {
+      const messages = await getOutboxMessages();
+      setRecentSosList(messages);
+      if (!activeSos && messages.length > 0) {
+        const latest = messages[0];
+        // If sent within the last 2 hours, show as active SOS
+        if (Date.now() - latest.timestamp < 2 * 60 * 60 * 1000) {
+          setActiveSos(latest);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to read IndexedDB outbox:', err);
+    }
+  }, [activeSos]);
+
+  // 2. Request Geolocation automatically (Never blocks SOS)
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude.toFixed(4);
+          const lon = position.coords.longitude.toFixed(4);
+          setCoordsLocation(`${lat}° N, ${lon}° E`);
+          setLocationAvailable(true);
+          setLocationDetecting(false);
+        },
+        () => {
+          setCoordsLocation('LOCATION UNAVAILABLE');
+          setLocationAvailable(false);
+          setLocationDetecting(false);
+        },
+        { timeout: 5000, enableHighAccuracy: true }
+      );
+    } else {
+      setCoordsLocation('LOCATION UNAVAILABLE');
+      setLocationAvailable(false);
+      setLocationDetecting(false);
+    }
+  }, []);
+
+  // 3. Initialize Node & Transport
   useEffect(() => {
     const id = getOrCreateNodeId();
     setNodeId(id);
-    refreshQueue();
+    refreshOutbox();
 
     const meshTransport = new BroadcastTransport();
     meshTransport.connect(id).then(() => {
@@ -56,342 +108,326 @@ export const SendSosPage: React.FC = () => {
     return () => {
       meshTransport.disconnect();
     };
-  }, []);
+  }, [refreshOutbox]);
 
-  const refreshQueue = async () => {
-    try {
-      const messages = await getOutboxMessages();
-      setQueuedMessages(messages);
-    } catch (err) {
-      console.error('Failed to read IndexedDB outbox:', err);
-    }
-  };
-
-  const broadcastPacket = async (msg: EmergencyMessage) => {
-    if (!transport) return;
-    setBroadcastingId(msg.id);
-    try {
-      await transport.broadcast(msg);
-      setStatusMessage({
-        text: `✓ BROADCAST TO MESH: Packet ${msg.id} transmitted across BroadcastChannel.`,
-        type: 'success',
-      });
-    } catch (err) {
-      console.error('Broadcast failed:', err);
-    } finally {
-      setTimeout(() => setBroadcastingId(null), 500);
-    }
-  };
-
-  const handleSendSos = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setStatusMessage(null);
-
-    // Form validation
-    const trimmedLocation = location.trim();
-    const trimmedReport = report.trim();
-
-    if (!trimmedLocation) {
-      setStatusMessage({ text: 'Error: Location / Zone is required.', type: 'error' });
-      return;
-    }
-
-    if (!trimmedReport) {
-      setStatusMessage({ text: 'Error: Emergency description cannot be empty.', type: 'error' });
-      return;
-    }
-
-    if (isNaN(peopleAffected) || peopleAffected < 1) {
-      setStatusMessage({ text: 'Error: Number of people affected must be at least 1.', type: 'error' });
-      return;
-    }
-
-    setSubmitting(true);
+  // 4. ONE-TAP EMERGENCY SOS ACTION
+  const handleTriggerSos = async () => {
+    setSending(true);
+    setSavedFeedback(null);
+    setDetailsSaved(false);
 
     try {
-      // Determine calculated baseline priority based on injury & people affected
-      let calculatedPriority: PriorityLevel = 'HIGH';
-      if (injuryPresent || peopleAffected >= 5) {
-        calculatedPriority = 'CRITICAL';
-      } else if (peopleAffected === 1 && !injuryPresent) {
-        calculatedPriority = 'MEDIUM';
-      }
-
       const timestamp = Date.now();
-      const uniqueMsgId = `SOS-${timestamp}-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+      const uniqueMsgId = `SOS-${timestamp}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
-      const newMessage: EmergencyMessage = {
+      const newSosMessage: EmergencyMessage = {
         id: uniqueMsgId,
         timestamp,
-        message: trimmedReport,
-        type: emergencyType,
-        peopleAffected: Number(peopleAffected),
-        location: trimmedLocation,
-        priority: calculatedPriority,
-        originNode: nodeId,
-        currentNode: nodeId,
+        message: 'EMERGENCY SOS: Immediate assistance required.',
+        type: 'OTHER',
+        peopleAffected: 1,
+        location: coordsLocation,
+        priority: 'CRITICAL',
+        originNode: nodeId || 'NODE-CITIZEN',
+        currentNode: nodeId || 'NODE-CITIZEN',
         hopCount: 0,
         status: 'STORED_LOCALLY',
         history: [
           {
-            node_id: nodeId,
+            node_id: nodeId || 'NODE-CITIZEN',
             timestamp,
             action: 'created',
           },
         ],
       };
 
-      // 1. CRITICAL: Persist to IndexedDB BEFORE updating UI
-      await saveMessage(newMessage);
+      // Guaranteed IndexedDB hardware storage first
+      await saveMessage(newSosMessage);
 
-      // 2. Refresh queue from IndexedDB to verify persistence
-      await refreshQueue();
-
-      // 3. Broadcast to mesh peers if transport is ready
+      // Broadcast across peer mesh transport
       if (transport) {
         try {
-          await transport.broadcast(newMessage);
+          await transport.broadcast(newSosMessage);
         } catch (bErr) {
           console.warn('Mesh broadcast deferred:', bErr);
         }
       }
 
-      // 4. Update UI
-      setStatusMessage({
-        text: `✓ STORED LOCALLY: Message ${newMessage.id} queued in IndexedDB and broadcast to mesh.`,
-        type: 'success',
-      });
-
-      // Clear or reset fields
-      // setReport('');
+      setActiveSos(newSosMessage);
+      await refreshOutbox();
     } catch (err) {
-      console.error('Failed to save SOS to IndexedDB:', err);
-      setStatusMessage({
-        text: `Failed to save message to local storage: ${(err as Error).message}`,
-        type: 'error',
-      });
+      console.error('Failed to save SOS:', err);
     } finally {
-      setSubmitting(false);
+      setSending(false);
     }
   };
 
+  // 5. SAVE OPTIONAL DETAILS (Never blocks initial SOS)
+  const handleSaveOptionalDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSos) return;
+
+    try {
+      const matched = QUICK_TYPES.find((t) => t.id === selectedQuickType);
+      const schemaType = matched ? matched.schemaType : 'OTHER';
+
+      const detailPrefix = selectedQuickType !== 'OTHER' ? `[${selectedQuickType}] ` : '';
+      const finalMessage = optionalMessage.trim()
+        ? `${detailPrefix}${optionalMessage.trim()}`
+        : `${detailPrefix}Immediate assistance required.`;
+
+      const updatedSos: EmergencyMessage = {
+        ...activeSos,
+        type: schemaType,
+        peopleAffected: Math.max(1, Number(peopleCount) || 1),
+        message: finalMessage,
+      };
+
+      await saveMessage(updatedSos);
+
+      if (transport) {
+        try {
+          await transport.broadcast(updatedSos);
+        } catch (bErr) {
+          console.warn('Rebroadcast failed:', bErr);
+        }
+      }
+
+      setActiveSos(updatedSos);
+      setDetailsSaved(true);
+      setSavedFeedback('✓ Details saved and dispatched to mesh.');
+      await refreshOutbox();
+    } catch (err) {
+      console.error('Failed to update details:', err);
+    }
+  };
+
+  // Determine user-friendly SOS status
+  const getSosStatusText = (status?: string) => {
+    if (status === 'SYNCED_TO_GATEWAY' || status === 'PROCESSED' || status === 'DISPATCHED' || status === 'RESOLVED') {
+      return 'SOS SYNCED';
+    }
+    if (status === 'RELAYED') {
+      return 'SOS RELAYING';
+    }
+    return 'SOS STORED';
+  };
+
   return (
-    <div className="sos-page-container">
-      {/* Network Status Header Bar */}
-      <NetworkStatus
-        simulatedOffline={simulatedOffline}
-        onToggleSimulatedOffline={setSimulatedOffline}
-      />
+    <div className="mobile-sos-container">
+      {/* Network Status & Location Header */}
+      <div className="mobile-header-bar">
+        <div className="network-pill">
+          <span className="live-dot"></span>
+          <span>OFFLINE MODE</span>
+        </div>
 
-      <div className="content-grid">
-        {/* Left Column: SOS Creation Panel */}
-        <section className="terminal-card form-section" aria-labelledby="sos-form-title">
-          <div className="card-header">
-            <div className="header-title-group">
-              <AlertOctagon className="icon-alert" size={20} />
-              <h1 id="sos-form-title" className="card-title">CREATE EMERGENCY SOS</h1>
-            </div>
-            <div className="node-badge" title="Persistent Browser Node Identifier">
-              <Radio size={12} />
-              <span>NODE: {nodeId || 'INITIALIZING...'}</span>
-            </div>
-          </div>
+        <div className="location-pill" title={coordsLocation}>
+          <MapPin size={12} />
+          <span>
+            {locationDetecting
+              ? 'LOCATION: Detecting...'
+              : locationAvailable
+              ? 'LOCATION: ✓ Location attached'
+              : 'LOCATION: Not available'}
+          </span>
+        </div>
+      </div>
 
-          <p className="card-subtitle">
-            Offline-first emergency report. Stored directly to device hardware storage (IndexedDB) and dispatched to nearby nodes via mesh relay.
-          </p>
-
-          <form onSubmit={handleSendSos} className="sos-form" noValidate>
-            <div className="form-group">
-              <label htmlFor="location-input">
-                <MapPin size={14} />
-                <span>LOCATION / ZONE / LANDMARK</span>
-              </label>
-              <input
-                id="location-input"
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="e.g. Bridge Zone, Sector 4, North Levee"
-                required
-                className="tactical-input"
-              />
-            </div>
-
-            <div className="form-row">
-              <div className="form-group half-width">
-                <label htmlFor="people-input">
-                  <Users size={14} />
-                  <span>PEOPLE AFFECTED</span>
-                </label>
-                <input
-                  id="people-input"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={peopleAffected}
-                  onChange={(e) => setPeopleAffected(parseInt(e.target.value) || 1)}
-                  required
-                  className="tactical-input"
-                />
-              </div>
-
-              <div className="form-group half-width">
-                <label htmlFor="type-select">
-                  <Activity size={14} />
-                  <span>EMERGENCY TYPE</span>
-                </label>
-                <select
-                  id="type-select"
-                  value={emergencyType}
-                  onChange={(e) => setEmergencyType(e.target.value as EmergencyType)}
-                  className="tactical-select"
-                >
-                  <option value="RESCUE">RESCUE</option>
-                  <option value="MEDICAL">MEDICAL</option>
-                  <option value="HAZARD">HAZARD (FLOOD/FIRE)</option>
-                  <option value="SUPPLIES">SUPPLIES NEEDED</option>
-                  <option value="SHELTER">SHELTER</option>
-                  <option value="OTHER">OTHER</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label className="checkbox-container" htmlFor="injury-checkbox">
-                <input
-                  id="injury-checkbox"
-                  type="checkbox"
-                  checked={injuryPresent}
-                  onChange={(e) => setInjuryPresent(e.target.checked)}
-                />
-                <span className="checkbox-custom"></span>
-                <span className="checkbox-label">
-                  <strong>INJURY / CASUALTIES PRESENT</strong> (Escalates priority to CRITICAL)
-                </span>
-              </label>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="report-textarea">
-                <span>WHAT IS HAPPENING? (SITUATION REPORT)</span>
-              </label>
-              <textarea
-                id="report-textarea"
-                rows={4}
-                value={report}
-                onChange={(e) => setReport(e.target.value)}
-                placeholder="Describe current status, specific hazards, children/elderly trapped, urgent needs..."
-                required
-                className="tactical-textarea"
-              />
-            </div>
-
-            {statusMessage && (
-              <div 
-                id="status-banner" 
-                className={`status-alert ${statusMessage.type === 'success' ? 'alert-success' : 'alert-danger'}`}
-                role="alert"
-              >
-                {statusMessage.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-                <span>{statusMessage.text}</span>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={submitting}
-              id="send-sos-btn"
-              className="btn-emergency-action"
-            >
-              <Send size={18} />
-              <span>{submitting ? 'COMMITTING TO INDEXEDDB...' : 'SEND SOS'}</span>
-            </button>
-          </form>
-        </section>
-
-        {/* Right Column: Persistent Local Outbox View */}
-        <section className="terminal-card queue-section" aria-labelledby="queue-title">
-          <div className="card-header">
-            <div className="header-title-group">
-              <Database className="icon-cyan" size={20} />
-              <h2 id="queue-title" className="card-title">LOCAL DEVICE OUTBOX (INDEXEDDB)</h2>
-            </div>
-            <span className="count-badge" id="queue-count-badge">
-              {queuedMessages.length} {queuedMessages.length === 1 ? 'MESSAGE' : 'MESSAGES'}
-            </span>
-          </div>
-
-          <div className="queue-callout">
-            <p className="callout-text">
-              <strong>STATUS: STORED LOCALLY</strong>
-              <br />
-              All reports below are persisted in browser IndexedDB storage. They will survive page refreshes and offline reboots until relayed or synced.
+      {/* Primary Emergency View */}
+      {!activeSos ? (
+        <section className="sos-hero-card">
+          <div className="sos-prompt-header">
+            <h1 className="sos-main-heading">ARE YOU IN DANGER?</h1>
+            <p className="sos-sub-heading">
+              Tap below to immediately broadcast an emergency signal to nearby participating phones.
             </p>
           </div>
 
-          <div className="messages-list" id="outbox-messages-list">
-            {queuedMessages.length === 0 ? (
-              <div className="empty-state">
-                <Layers size={32} className="empty-icon" />
-                <p>No messages stored locally in outbox.</p>
-                <span className="empty-hint">Submit an emergency report above to create an offline packet.</span>
+          <div className="sos-action-wrapper">
+            <button
+              type="button"
+              id="send-sos-btn"
+              disabled={sending}
+              onClick={handleTriggerSos}
+              className="btn-sos-trigger"
+              aria-label="Send Emergency SOS Now"
+            >
+              <div className="sos-button-pulse"></div>
+              <div className="sos-button-inner">
+                <AlertTriangle size={40} className="sos-btn-icon" />
+                <span className="sos-btn-text">{sending ? 'STORING...' : 'SEND SOS'}</span>
+                <span className="sos-btn-sub">ONE TAP EMERGENCY SIGNAL</span>
               </div>
-            ) : (
-              queuedMessages.map((msg) => (
-                <article key={msg.id} className="message-packet-card" data-id={msg.id}>
-                  <div className="packet-header">
-                    <span className="packet-id">{msg.id}</span>
-                    <span className={`priority-tag priority-${msg.priority.toLowerCase()}`}>
-                      {msg.priority}
-                    </span>
-                  </div>
+            </button>
+          </div>
 
-                  <div className="packet-meta">
-                    <span className="meta-item">
-                      <Clock size={12} />
-                      {new Date(msg.timestamp).toLocaleTimeString()}
-                    </span>
-                    <span className="meta-item">
-                      <MapPin size={12} />
-                      {msg.location}
-                    </span>
-                    <span className="meta-item">
-                      <Users size={12} />
-                      {msg.peopleAffected} {msg.peopleAffected === 1 ? 'person' : 'people'}
-                    </span>
-                  </div>
-
-                  <p className="packet-body">{msg.message}</p>
-
-                  <div className="packet-footer">
-                    <div className="hop-trail">
-                      <span className="hop-pill">ORIGIN: {msg.originNode}</span>
-                      <ArrowRight size={12} className="hop-arrow" />
-                      <span className="hop-pill">HOPS: {msg.hopCount}</span>
-                    </div>
-                    <div className="packet-action-group">
-                      <button
-                        type="button"
-                        onClick={() => broadcastPacket(msg)}
-                        disabled={broadcastingId === msg.id}
-                        className="btn-rebroadcast"
-                        title="Broadcast packet to mesh peers"
-                      >
-                        <Share2 size={12} />
-                        <span>{broadcastingId === msg.id ? 'BROADCASTING...' : 'BROADCAST'}</span>
-                      </button>
-                      <span className="status-badge-local" id={`status-${msg.id}`}>
-                        {msg.status}
-                      </span>
-                    </div>
-                  </div>
-                </article>
-              ))
-            )}
+          <div className="sos-quick-reassurance">
+            <p>
+              🔒 <strong>Offline Store-and-Forward:</strong> Your message is immediately saved to this phone hardware and will hop through nearby phones until it reaches help.
+            </p>
           </div>
         </section>
-      </div>
+      ) : (
+        /* State 2: Emergency Confirmation & Optional Details */
+        <div className="sos-active-flow">
+          {/* Confirmation Card */}
+          <section className="sos-confirmation-card">
+            <div className="confirmation-header">
+              <div className="confirmation-title-row">
+                <CheckCircle2 size={26} className="icon-success" />
+                <div>
+                  <h2 className="confirmation-title">SOS STORED</h2>
+                  <span className="sos-badge-tag">{getSosStatusText(activeSos.status)}</span>
+                </div>
+              </div>
+              <span className="priority-tag priority-critical">CRITICAL</span>
+            </div>
+
+            <div className="confirmation-status-box">
+              <div className="status-indicator-line">
+                <span className="status-check">✓</span>
+                <span>Saved on this device (IndexedDB)</span>
+              </div>
+              <div className="status-indicator-line">
+                <span className="status-check">✓</span>
+                <span>Ready to relay to nearby MorrowMesh nodes</span>
+              </div>
+            </div>
+
+            <div className="offline-notice-callout">
+              <strong>OFFLINE MODE:</strong> Your emergency message is safely stored on this device. When another participating device is nearby, it will relay onward.
+            </div>
+
+            <button
+              type="button"
+              onClick={handleTriggerSos}
+              disabled={sending}
+              className="btn-compact btn-send-another"
+            >
+              <RefreshCw size={12} />
+              <span>SEND ANOTHER SOS</span>
+            </button>
+          </section>
+
+          {/* Optional Details Form: HELP RESCUERS */}
+          <section className="sos-optional-card">
+            <div className="optional-card-header">
+              <h3 className="optional-title">HELP RESCUERS</h3>
+              <span className="optional-badge">OPTIONAL</span>
+            </div>
+
+            <p className="optional-subtitle">
+              What happened? Tap a category to help responders bring the right equipment:
+            </p>
+
+            <form onSubmit={handleSaveOptionalDetails} className="optional-form">
+              <div className="form-group-mobile">
+                <div className="quick-types-grid">
+                  {QUICK_TYPES.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setSelectedQuickType(t.id)}
+                      className={`btn-quick-type ${selectedQuickType === t.id ? 'active' : ''}`}
+                    >
+                      {t.icon}
+                      <span>{t.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="form-group-mobile">
+                <label htmlFor="people-count-mobile" className="input-label-mobile">
+                  PEOPLE NEEDING HELP
+                </label>
+                <div className="people-stepper">
+                  <button
+                    type="button"
+                    className="stepper-btn"
+                    onClick={() => setPeopleCount((p) => Math.max(1, p - 1))}
+                  >
+                    -
+                  </button>
+                  <input
+                    id="people-count-mobile"
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={peopleCount}
+                    onChange={(e) => setPeopleCount(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="stepper-input"
+                  />
+                  <button
+                    type="button"
+                    className="stepper-btn"
+                    onClick={() => setPeopleCount((p) => p + 1)}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              <div className="form-group-mobile">
+                <label htmlFor="optional-message-input" className="input-label-mobile">
+                  OPTIONAL MESSAGE
+                </label>
+                <textarea
+                  id="optional-message-input"
+                  rows={3}
+                  value={optionalMessage}
+                  onChange={(e) => setOptionalMessage(e.target.value)}
+                  placeholder="Tell rescuers anything important (e.g. water rising, trapped on 2nd floor)..."
+                  className="mobile-textarea"
+                />
+              </div>
+
+              {savedFeedback && (
+                <div className="saved-feedback-banner">
+                  <CheckCircle2 size={14} />
+                  <span>{savedFeedback}</span>
+                </div>
+              )}
+
+              <div className="optional-form-actions">
+                <button
+                  type="submit"
+                  className="btn-save-details"
+                  id="save-details-btn"
+                >
+                  <span>{detailsSaved ? 'UPDATE DETAILS' : 'SAVE DETAILS'}</span>
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {/* Simple Active Device Summary */}
+      {recentSosList.length > 0 && (
+        <section className="mobile-history-card">
+          <div className="history-header">
+            <span className="history-title">RECENT SOS ON THIS DEVICE</span>
+            <span className="history-count">{recentSosList.length}</span>
+          </div>
+
+          <div className="history-list">
+            {recentSosList.slice(0, 3).map((item) => (
+              <div key={item.id} className="history-item">
+                <div className="history-item-top">
+                  <span className="history-status-pill">{getSosStatusText(item.status)}</span>
+                  <span className="history-item-time">
+                    {new Date(item.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+                <div className="history-item-text">{item.message}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 };
