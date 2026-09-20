@@ -9,7 +9,7 @@ export const VideoBackground: React.FC = () => (
       loop
       playsInline
       preload="metadata"
-      src="/assets/background.mp4"
+      src="/assets/earth-at-night-from-space.mp4"
     />
     <div className="video-background-overlay" />
   </div>
