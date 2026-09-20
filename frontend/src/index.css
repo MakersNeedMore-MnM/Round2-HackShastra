@@ -25,6 +25,10 @@
   
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --glass-primary: rgba(10, 14, 18, 0.68);
+  --glass-secondary: rgba(10, 14, 18, 0.54);
+  --glass-soft: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.12);
 }
 
 * {
@@ -39,6 +43,48 @@ body {
   font-family: var(--font-sans);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+.video-background {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: #070a0d;
+  pointer-events: none;
+}
+
+.video-background-media,
+.video-background-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.video-background-media {
+  object-fit: cover;
+  filter: brightness(0.72) saturate(0.78);
+}
+
+.video-background-overlay {
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.app-container {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
 }
 
 /* App Header */
@@ -2531,6 +2577,163 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px;
+}
+
+/* =========================================================
+   CINEMATIC COMMAND SURFACES
+   ========================================================= */
+
+.app-header {
+  background: rgba(10, 14, 18, 0.78);
+  border-bottom-color: var(--glass-border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.nav-btn,
+.brand-team,
+.network-pill,
+.location-pill,
+.node-status-pill,
+.gateway-status-pill,
+.hq-status-pill,
+.relay-badge,
+.metric-badge,
+.hq-badge {
+  background: var(--glass-soft);
+  border-color: var(--glass-border);
+}
+
+.nav-btn-active {
+  background: rgba(0, 240, 255, 0.14);
+}
+
+.mobile-sos-container,
+.mobile-node-container,
+.mobile-gateway-container,
+.mobile-hq-container {
+  position: relative;
+}
+
+.sos-hero-card,
+.sos-confirmation-card,
+.sos-optional-card,
+.mobile-history-card,
+.node-card,
+.gateway-card,
+.hq-card {
+  background: var(--glass-primary);
+  border-color: var(--glass-border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.sos-hero-card {
+  border-color: rgba(255, 42, 75, 0.72);
+  background: rgba(10, 14, 18, 0.72);
+}
+
+.sos-confirmation-card {
+  border-color: rgba(35, 134, 54, 0.78);
+}
+
+.node-metric-card,
+.gateway-metric-card,
+.hq-kpi-card {
+  background: var(--glass-secondary);
+  border-color: var(--glass-border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.relay-packet-item,
+.gateway-packet-item,
+.incident-mobile-card,
+.history-item,
+.message-packet-card,
+.zone-card {
+  background: rgba(7, 11, 15, 0.72);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+
+.incident-mobile-card.expanded {
+  background: rgba(11, 15, 21, 0.86);
+}
+
+.confirmation-status-box,
+.incident-detail-panel,
+.topology-canvas-wrapper,
+.event-log-terminal,
+.sync-stats-box {
+  background: rgba(4, 7, 10, 0.78);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+
+.topology-legend {
+  background: rgba(9, 12, 16, 0.72);
+}
+
+.tactical-input,
+.tactical-select,
+.tactical-textarea,
+.mobile-textarea,
+.stepper-input,
+.tactical-filter-select {
+  background: rgba(5, 8, 12, 0.78);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.btn-compact,
+.btn-secondary-action,
+.btn-relay-action,
+.btn-quick-type,
+.stepper-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--cyan-primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .app-header,
+  .sos-hero-card,
+  .sos-confirmation-card,
+  .sos-optional-card,
+  .mobile-history-card,
+  .node-card,
+  .gateway-card,
+  .hq-card {
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .video-background-media {
+    filter: brightness(0.64) saturate(0.72);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video-background-media {
+    display: none;
+  }
+
+  .video-background {
+    background: #070a0d;
+  }
+
+  .sos-button-pulse,
+  .spin-icon {
+    animation: none;
+  }
 }
 
 .zone-summary-pill {

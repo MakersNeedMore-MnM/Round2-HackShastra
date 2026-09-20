@@ -3,6 +3,7 @@ import { SendSosPage } from './pages/SendSosPage';
 import { RelayNodePage } from './pages/RelayNodePage';
 import { GatewayPage } from './pages/GatewayPage';
 import { CommandHqPage } from './pages/CommandHqPage';
+import { VideoBackground } from './components/VideoBackground';
 import { Radio, ShieldAlert, Send, Layers, CloudUpload, Activity } from 'lucide-react';
 
 type ViewMode = 'send' | 'node' | 'gateway' | 'command';
@@ -36,8 +37,10 @@ export function App() {
   };
 
   return (
-    <div className="app-container">
-      <header className="app-header">
+    <>
+      <VideoBackground />
+      <div className="app-container">
+        <header className="app-header">
         <div className="brand-section">
           <ShieldAlert size={22} className="icon-alert" />
           <span className="brand-title">MORROWMESH</span>
@@ -87,15 +90,16 @@ export function App() {
           <Radio size={12} style={{ display: 'inline', marginRight: 4 }} />
           <span>TEAM HACKSHASTRA // RUDRA PRATAP SINGH</span>
         </div>
-      </header>
+        </header>
 
-      <main>
-        {currentView === 'send' && <SendSosPage />}
-        {currentView === 'node' && <RelayNodePage />}
-        {currentView === 'gateway' && <GatewayPage onNavigateToHq={() => navigateTo('command')} />}
-        {currentView === 'command' && <CommandHqPage onNavigateToGateway={() => navigateTo('gateway')} />}
-      </main>
-    </div>
+        <main>
+          {currentView === 'send' && <SendSosPage />}
+          {currentView === 'node' && <RelayNodePage />}
+          {currentView === 'gateway' && <GatewayPage onNavigateToHq={() => navigateTo('command')} />}
+          {currentView === 'command' && <CommandHqPage onNavigateToGateway={() => navigateTo('gateway')} />}
+        </main>
+      </div>
+    </>
   );
 }
 
